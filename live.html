@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>Excel×PowerPoint 30秒</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-japanese-900-normal.woff2);font-weight:900}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-latin-900-normal.woff2);font-weight:900;unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-japanese-700-normal.woff2);font-weight:700}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-latin-700-normal.woff2);font-weight:700;unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-japanese-400-normal.woff2);font-weight:400}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-latin-400-normal.woff2);font-weight:400;unicode-range:U+0000-00FF,U+2000-206F}
+html,body{margin:0;background:#000;height:100%}
+body{display:grid;place-items:center}
+canvas{display:block;max-width:100vw;max-height:100vh;aspect-ratio:16/9}
+</style></head>
+<body><canvas id="c" width="1920" height="1080"></canvas>
+<script>
+/* 時刻は 絵コンテ.md と sfx_opening.py と同じ。画面は t だけで決まる。 */
+const W=1920,H=1080,CX=W/2,CY=H/2;
+const DUR=30.0,BPM=120,BEAT=60/BPM;
+const C={navy:'#0B2A4A',blue:'#0A7CC4',white:'#FFFFFF',paper:'#F6FAFD',ink:'#12233A',acc:'#FFD23F',sub:'#BFE3F7',foot:'#5B7A99',line:'#C9D9E6',head:'#DCEFFA',grey:'#B8C7D4'};
+const FONTS=['900 40px JP','700 40px JP','400 40px JP'];
+const RAW=[['営業',4],['カスタマーサポート',2],['開発',5],['管理',4],['営業',3],['開発',4],['営業',3],['管理',4],['カスタマーサポート',3],['開発',4],['営業',4]];
+const RES=[['営業','3.29'],['カスタマーサポート','2.83'],['開発','4.12'],['管理','3.86']];
+const MSG1=['部署ごとの平均を、','表とグラフにしてください'];
+const MSG2=['上司に、','改善を決めてほしい資料です'];
+const FONT_SAMPLE='ずっと使ってきた道具Excelの中に、AIがいます関数は、1つも打っていません誰に、何をしてほしいか打ったのは、やりたいことを書いた文だけ使い慣れた道具が、言葉で動くようになったサロン向けAI勉強会 第3回＋第4回（再開催）×PowerPoint部署満足度の平均=AVERAGE(0123456789.研修の実施報告'+RAW.map(r=>r[0]).join('')+MSG1.join('')+MSG2.join('');
+
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const mk=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;return c};
+const bufA=mk();
+
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)),lerp=(a,b,t)=>a+(b-a)*t,prog=(t,a,b)=>clamp((t-a)/(b-a)),TAU=Math.PI*2;
+const E={
+ linear:t=>t,inQuad:t=>t*t,inCubic:t=>t*t*t,outCubic:t=>1-(1-t)**3,outQuart:t=>1-(1-t)**4,
+ outExpo:t=>t>=1?1:1-2**(-10*t),inExpo:t=>t<=0?0:2**(10*t-10),
+ inOutCubic:t=>t<.5?4*t*t*t:1-(-2*t+2)**3/2,
+ inOutExpo:t=>t<=0?0:t>=1?1:t<.5?2**(20*t-10)/2:(2-2**(-20*t+10))/2,
+ outBack:t=>{const c1=1.70158,c3=c1+1;return 1+c3*(t-1)**3+c1*(t-1)**2},
+};
+const hash=n=>{const s=Math.sin(n*127.1+311.7)*43758.5453;return s-Math.floor(s)};
+const noise=x=>{const i=Math.floor(x),f=x-i,u=f*f*(3-2*f);return lerp(hash(i),hash(i+1),u)*2-1};
+const mix=(a,b,p)=>{const h=s=>[1,3,5].map(i=>parseInt(s.slice(i,i+2),16)),x=h(a),y=h(b);return'rgb('+x.map((v,i)=>Math.round(lerp(v,y[i],clamp(p)))).join(',')+')'};
+
+const HITS=[[2.0,.5],[2.5,.15],[3.0,.15],[3.5,.15],[4.0,.2],[10.0,.8],[11.5,.2],[12.0,.2],[12.5,.2],[13.0,.3],[15.2,.6],[18.0,.6],[19.0,.5],[22.0,.5],[26.5,.7]];
+const impact=t=>{let v=0;for(const[h,a]of HITS){const d=t-h;if(d>=0&&d<.5)v=Math.max(v,a*Math.exp(-d*12))}return v};
+
+function txt(c,s,x,y,o={}){
+ c.save();c.globalAlpha*=o.alpha??1;c.font=o.font;c.textAlign=o.align||'left';c.textBaseline='alphabetic';
+ c.fillStyle=o.fill||C.white;c.fillText(s,x,y);c.restore();
+}
+// 1文字ずつ、見えない線の下からせり上がる。align: 'center' | 'left'
+function masked(c,word,x,base,font,t0,t,{stagger=.05,dur=.4,ls=2,col=C.white,align='center'}={}){
+ c.save();c.font=font;c.textAlign='left';
+ const ch=[...word],ws=ch.map(s=>c.measureText(s).width+ls),tot=ws.reduce((a,b)=>a+b,0)-ls;
+ const m=c.measureText(word),asc=m.actualBoundingBoxAscent,desc=m.actualBoundingBoxDescent;
+ let px=align==='center'?x-tot/2:x;
+ ch.forEach((s,i)=>{const p=prog(t,t0+i*stagger,t0+i*stagger+dur);
+  if(p>0){c.save();c.beginPath();c.rect(px-10,base-asc-20,ws[i]+20,asc+desc+30);c.clip();
+   c.fillStyle=col;c.fillText(s,px,base+(1-E.outExpo(p))*(asc+desc+30));c.restore()}
+  px+=ws[i]});
+ c.restore();return tot;
+}
+function rr(c,x,y,w,h,r){c.beginPath();c.roundRect(x,y,w,h,r)}
+function caption(c,s,t,tin,tout){
+ if(t<tin||t>tout+.3)return;
+ c.save();c.globalAlpha=1-prog(t,tout,tout+.3);masked(c,s,CX,1010,'900 62px JP',tin,t);c.restore();
+}
+
+/* ---------- 表（Excelの場面） ---------- */
+const SH={x:120,y:150,w:1060,h:720,rh:60},COLX=[120,420,580,640,940,1180];
+const cell=(r,k)=>({x:COLX[k],y:SH.y+r*SH.rh,w:COLX[k+1]-COLX[k],h:SH.rh});
+const CLICK=[[2.5,1],[3.0,5],[3.5,7]];             // 時刻, 行（満足度の列を1つずつ選ぶ）
+const CHART={x:610,y:525,w:560,h:335};
+const BAR_T=[11.5,12.0,12.5,13.0];
+const fillT=(r,k)=>10.0+(r+k)*.125;                 // 結果の表が斜めの順に埋まる
+function drawChart(c,t){
+ const a=E.outBack(prog(t,11.0,11.4));if(a<=0)return;
+ c.save();c.translate(CHART.x+CHART.w/2,CHART.y+CHART.h/2);c.scale(lerp(.8,1,a),lerp(.8,1,a));c.globalAlpha*=clamp(a*1.5);
+ c.translate(-CHART.w/2,-CHART.h/2);
+ rr(c,0,0,CHART.w,CHART.h,14);c.fillStyle=C.white;c.fill();c.lineWidth=2;c.strokeStyle=C.line;c.stroke();
+ txt(c,'満足度の平均',24,46,{font:'700 26px JP',fill:C.ink});
+ RES.forEach((r,i)=>{const y=78+i*62,p=prog(t,BAR_T[i],BAR_T[i]+.45),len=+r[1]/5*285*E.outBack(p);
+  txt(c,r[0],240,y+32,{font:'700 22px JP',fill:C.ink,align:'right'});
+  if(p>0){const fl=1-prog(t,BAR_T[i]+.2,BAR_T[i]+.9);
+   rr(c,254,y+4,Math.max(len,2),38,6);c.fillStyle=mix(C.blue,C.acc,fl);c.fill();
+   if(p>.6)txt(c,r[1],254+len-10,y+32,{font:'700 22px JP',fill:fl>.5?C.ink:C.white,align:'right',alpha:prog(p,.6,1)})}});
+ c.restore();
+}
+function drawSheet(c,t){
+ c.save();
+ rr(c,SH.x,SH.y,SH.w,SH.h,10);c.fillStyle=C.white;c.fill();c.save();c.clip();
+ c.fillStyle=C.head;c.fillRect(COLX[0],SH.y,COLX[2]-COLX[0],SH.rh);
+ // 結果の表（言葉が動かしたところ）
+ if(t>=10){for(let r=0;r<5;r++)for(let k=3;k<5;k++){const t0=fillT(r,k-3),p=prog(t,t0,t0+.5);if(p<=0)continue;
+   const q=cell(r,k);c.fillStyle=mix(r?C.white:C.head,C.acc,1-E.outCubic(p));c.fillRect(q.x,q.y,q.w,q.h);
+   const s=r?RES[r-1][k-3]:['部署','満足度の平均'][k-3];
+   txt(c,s,k===4&&r?q.x+q.w-18:q.x+16,q.y+41,{font:(r?'400':'700')+' 28px JP',fill:C.ink,align:k===4&&r?'right':'left',alpha:prog(p,0,.3)})}}
+ // 罫線
+ c.strokeStyle=C.line;c.lineWidth=1.5;c.beginPath();
+ for(let r=1;r<12;r++){c.moveTo(SH.x,SH.y+r*SH.rh);c.lineTo(SH.x+SH.w,SH.y+r*SH.rh)}
+ for(let k=1;k<5;k++){c.moveTo(COLX[k],SH.y);c.lineTo(COLX[k],SH.y+SH.h)}c.stroke();
+ // 元のデータ
+ txt(c,'部署',136,SH.y+41,{font:'700 28px JP',fill:C.ink});txt(c,'満足度',436,SH.y+41,{font:'700 28px JP',fill:C.ink});
+ RAW.forEach((r,i)=>{const y=SH.y+(i+1)*SH.rh+41;txt(c,r[0],136,y,{font:'400 28px JP',fill:C.ink});txt(c,''+r[1],562,y,{font:'400 28px JP',fill:C.ink,align:'right'})});
+ // 手作業：1つずつ選ぶ → =AVERAGE( と打ちかける。言葉が届いたら消える
+ const gone=1-prog(t,9.9,10.1);
+ if(gone>0){c.save();c.globalAlpha*=gone;c.strokeStyle=C.blue;c.lineWidth=4;
+  for(const[ct,r]of CLICK)if(t>=ct){const q=cell(r,1);c.fillStyle='rgba(10,124,196,.12)';c.fillRect(q.x,q.y,q.w,q.h);c.strokeRect(q.x+2,q.y+2,q.w-4,q.h-4)}
+  if(t>=4.0){const q=cell(1,4),s='=AVERAGE('.slice(0,Math.floor(prog(t,4.1,4.75)*9+.001));c.strokeRect(q.x+2,q.y+2,q.w-4,q.h-4);
+   c.font='400 28px JP';const w=c.measureText(s).width;txt(c,s,q.x+16,q.y+41,{font:'400 28px JP',fill:C.ink});
+   if(Math.floor(t*2.5)%2===0||t<4.8){c.fillStyle=C.ink;c.fillRect(q.x+19+w,q.y+14,2.5,32)}}
+  c.restore()}
+ c.restore();
+ drawChart(c,t);
+ c.restore();
+}
+function cursorPos(t){
+ const pts=[[2.0,900,760],[2.5,520,245],[3.0,520,485],[3.5,520,605],[4.0,1010,245],[30,1010,245]];
+ for(let i=1;i<pts.length;i++)if(t<pts[i][0]){const a=pts[i-1],b=pts[i],p=E.inOutCubic(prog(t,b[0]-.36,b[0]-.04));return[lerp(a[1],b[1],p),lerp(a[2],b[2],p)]}
+ return[1010,245];
+}
+function drawCursor(c,t){
+ if(t<2.1)return;let[x,y]=cursorPos(t);
+ if(t>4.75){x+=85*E.outCubic(prog(t,4.75,5.3));y+=228*E.outCubic(prog(t,4.75,5.3))}   // 手が離れて止まる
+ let press=0;for(const tt of[2.5,3,3.5,4])press=Math.max(press,t>=tt?1-prog(t,tt,tt+.15):0);
+ c.save();c.translate(x,y);c.scale(1.5-press*.2,1.5-press*.2);c.globalAlpha*=prog(t,2.1,2.3)*lerp(1,.45,prog(t,5.5,6));
+ c.beginPath();c.moveTo(0,0);c.lineTo(0,30);c.lineTo(8,23);c.lineTo(14,36);c.lineTo(19,34);c.lineTo(13,21);c.lineTo(23,21);c.closePath();
+ c.fillStyle=C.white;c.fill();c.lineWidth=2.5;c.strokeStyle=C.ink;c.lineJoin='round';c.stroke();c.restore();
+}
+
+/* ---------- 入力欄のある枠と、黄色い一文 ---------- */
+const PN={x:1260,y:150,w:540,h:750},BUB={w:480};
+function drawPanel(c,ox){   // ox: 画面の外からのずれ
+ c.save();c.translate(ox,0);
+ c.shadowColor='rgba(6,30,60,.25)';c.shadowBlur=40;c.shadowOffsetY=12;rr(c,PN.x,PN.y,PN.w,PN.h,24);c.fillStyle=C.paper;c.fill();c.shadowColor='transparent';
+ c.fillStyle=C.blue;c.beginPath();c.arc(PN.x+56,PN.y+58,24,0,TAU);c.fill();
+ c.fillStyle=C.white;c.beginPath();for(let i=0;i<8;i++){const a=i*TAU/8-TAU/4,r=i%2?5:15;c.lineTo(PN.x+56+Math.cos(a)*r,PN.y+58+Math.sin(a)*r)}c.fill();
+ c.fillStyle=C.grey;rr(c,PN.x+96,PN.y+48,150,20,10);c.fill();
+ c.strokeStyle=C.line;c.lineWidth=2;c.beginPath();c.moveTo(PN.x,PN.y+110);c.lineTo(PN.x+PN.w,PN.y+110);c.stroke();
+ rr(c,PN.x+30,PN.y+PN.h-110,PN.w-60,80,18);c.fillStyle=C.white;c.fill();c.strokeStyle=C.grey;c.lineWidth=2.5;c.stroke();
+ c.fillStyle=C.blue;c.beginPath();c.arc(PN.x+PN.w-72,PN.y+PN.h-70,24,0,TAU);c.fill();
+ c.strokeStyle=C.white;c.lineWidth=5;c.lineCap='round';c.lineJoin='round';c.beginPath();c.moveTo(PN.x+PN.w-72,PN.y+PN.h-58);c.lineTo(PN.x+PN.w-72,PN.y+PN.h-82);c.moveTo(PN.x+PN.w-82,PN.y+PN.h-72);c.lineTo(PN.x+PN.w-72,PN.y+PN.h-82);c.lineTo(PN.x+PN.w-62,PN.y+PN.h-72);c.stroke();
+ c.restore();
+}
+const BC=[1530,640];   // 吹き出しの中心
+// lines を t0 から step 秒ごとに1文字ずつ打つ。bold: 太くして下線を引く範囲 [行, 開始, 終了]
+function drawBubble(c,lines,t,t0,step,tSend,bold=[]){
+ if(t<t0-.2||t>tSend+.3)return;
+ const total=lines.join('').length,n=Math.floor(clamp((t-t0)/step,0,total)+.001);
+ const shown=[];let rest=n;for(const l of lines){shown.push(l.slice(0,rest));rest=Math.max(0,rest-l.length)}
+ const nl=shown.filter(s=>s.length).length||1,h=44+nl*54,ant=Math.sin(prog(t,tSend-.25,tSend)*Math.PI/2)*.08,col=E.inCubic(prog(t,tSend,tSend+.3));
+ const s=(1-ant)*(1-col)*E.outBack(prog(t,t0-.2,t0+.1));if(s<=.01)return;
+ c.save();c.translate(BC[0],BC[1]);c.scale(s,s);c.translate(-BUB.w/2,-h/2);
+ rr(c,0,0,BUB.w,h,22);c.fillStyle=C.acc;c.fill();c.textAlign='left';
+ shown.forEach((sl,li)=>{let x=20;const y=62+li*54;[...sl].forEach((ch,ci)=>{const b=bold.some(r=>r[0]===li&&ci>=r[1]&&ci<r[2]);
+   c.font=(b?'900':'700')+' 33px JP';const w=c.measureText(ch).width;c.fillStyle=C.ink;c.fillText(ch,x,y);if(b)c.fillRect(x,y+9,w,4);x+=w})});
+ if(n<total||Math.floor(t*2.5)%2===0){const li=Math.max(0,shown.filter(s=>s.length).length-1);c.font='700 33px JP';let w=0;[...shown[li]].forEach(ch=>w+=c.measureText(ch).width);c.fillStyle=C.ink;c.fillRect(24+w,30+li*54,3,38)}
+ c.restore();
+}
+// 黄色い点が弧を描いて飛ぶ（跡を残す）
+function flyDot(c,t,t0,t1,from,to,bend){
+ if(t<t0||t>t1+.25)return;
+ const at=u=>{const p=E.inOutCubic(clamp(u)),mx=(from[0]+to[0])/2,my=(from[1]+to[1])/2+bend;return[(1-p)**2*from[0]+2*p*(1-p)*mx+p*p*to[0],(1-p)**2*from[1]+2*p*(1-p)*my+p*p*to[1]]};
+ for(let k=10;k>=0;k--){const u=(t-k*.025-t0)/(t1-t0);if(u<0||u>1)continue;const[x,y]=at(u);c.save();c.globalAlpha*=(1-k/11)*.9;c.fillStyle=C.acc;c.beginPath();c.arc(x,y,20-k*1.4,0,TAU);c.fill();c.restore()}
+ const d=t-t1;if(d>=0){c.save();c.globalAlpha*=1-d/.25;c.strokeStyle=C.acc;c.lineWidth=8;c.beginPath();c.arc(to[0],to[1],20+d*500,0,TAU);c.stroke();c.restore()}
+}
+
+/* ---------- スライド（PowerPointの場面）。座標はこの場面の中の値 ---------- */
+const SL0={x:330,y:200,w:640,h:360},SLA={x:120,y:330,w:530,h:298},SLB={x:670,y:330,w:530,h:298};
+const lr=(a,b,p)=>({x:lerp(a.x,b.x,p),y:lerp(a.y,b.y,p),w:lerp(a.w,b.w,p),h:lerp(a.h,b.h,p)});
+function slideFrame(c,r,draw,glow=0){
+ c.save();c.translate(r.x,r.y);c.scale(r.w/640,r.w/640);
+ c.shadowColor='rgba(6,30,60,.25)';c.shadowBlur=30;c.shadowOffsetY=10;c.fillStyle=C.white;c.fillRect(0,0,640,360);c.shadowColor='transparent';
+ draw();if(glow>0){c.globalAlpha*=glow;c.strokeStyle=C.acc;c.lineWidth=10;c.strokeRect(0,0,640,360)}c.restore();
+}
+function oldSlide(c){
+ c.fillStyle=C.navy;c.fillRect(0,0,640,12);txt(c,'研修の実施報告',36,70,{font:'700 32px JP',fill:C.ink});
+ c.fillStyle=C.grey;for(let i=0;i<9;i++){rr(c,36,100+i*26,[540,560,500,568,430,552,520,560,300][i],12,6);c.fill()}
+}
+const HOLD=[370,655,.5];   // 運ばれてきたグラフが待つ位置（左上x, 左上y, 倍率）
+function chartPPT(t){
+ const dst=[SLB.x+SLB.w*.47,SLB.y+SLB.h*.24,.455],p=E.inOutCubic(prog(t,18.5,19.0));
+ return[lerp(HOLD[0],dst[0],p),lerp(HOLD[1],dst[1],p)+Math.sin(t*3)*4*(1-p)-60*Math.sin(p*Math.PI),lerp(HOLD[2],dst[2],p)];
+}
+function drawPPT(c,t,full){
+ const mv=E.inOutCubic(prog(t,18.0,18.5)),ra=lr(SL0,SLA,mv),nb=prog(t,18.05,18.6);
+ if(nb>0){const rb=lr(ra,SLB,E.outBack(nb));
+  slideFrame(c,rb,()=>{c.fillStyle=C.navy;c.fillRect(0,0,640,12);txt(c,'研修の実施報告',36,70,{font:'700 32px JP',fill:C.ink});
+   [19.0,19.25,19.5].forEach((tt,i)=>{const p=E.outExpo(prog(t,tt,tt+.35));if(p>0){c.fillStyle=C.blue;c.beginPath();c.arc(46,138+i*62,9,0,TAU);c.fill();c.fillStyle=mix(C.ink,C.acc,1-prog(t,tt+.2,tt+.8));rr(c,68,128+i*62,[190,210,160][i]*p,20,10);c.fill()}})},
+   (1-prog(t,18.6,19.6))*clamp(nb*2));
+ }
+ slideFrame(c,ra,()=>oldSlide(c),0);
+ // 運ばれてきたグラフ
+ if(t>=15.2||full){const[x,y,s]=chartPPT(t);c.save();c.translate(x,y);c.scale(s,s);c.translate(-CHART.x,-CHART.y);
+  if(t<19){c.shadowColor='rgba(6,30,60,.3)';c.shadowBlur=30;c.shadowOffsetY=12;rr(c,CHART.x,CHART.y,CHART.w,CHART.h,14);c.fillStyle=C.white;c.fill();c.shadowColor='transparent'}
+  drawChart(c,20);c.restore()}
+ drawPanel(c,0);
+ if(!full){drawBubble(c,MSG2,t,16.0,.1,17.7,[[0,0,3],[1,0,9]]);flyDot(c,t,17.85,18.0,BC,[SL0.x+SL0.w/2,SL0.y+SL0.h/2],-120)}
+}
+/* Excelの場面：表・枠・カーソル・一文 */
+function drawExcel(c,t,full){
+ drawSheet(c,t);
+ const pin=E.outBack(prog(t,5.0,5.5));if(t>=5)drawPanel(c,(1-pin)*760);
+ if(!full){drawCursor(c,t);drawBubble(c,MSG1,t,6.0,.125,9.0);flyDot(c,t,9.3,10.0,BC,[790,180],-260);
+  // グラフの写しが浮いて、右へ運ばれる
+  if(t>=14&&t<15.2){const p=E.outBack(prog(t,14.0,14.45)),g=E.inOutExpo(prog(t,14.6,15.2)),s=lerp(1,1.08,p)*lerp(1,HOLD[2]/1.08,g);
+   const x=lerp(CHART.x-22*p,W+HOLD[0],g),y=lerp(CHART.y-30*p,HOLD[1],g);
+   c.save();c.translate(x,y);c.scale(s,s);c.translate(-CHART.x,-CHART.y);c.shadowColor='rgba(6,30,60,.3)';c.shadowBlur=30;c.shadowOffsetY=14;rr(c,CHART.x,CHART.y,CHART.w,CHART.h,14);c.fillStyle=C.white;c.fill();c.shadowColor='transparent';drawChart(c,20);c.restore()}}
+}
+
+/* ---------- 冒頭：線で描かれた2つの道具 ---------- */
+const IC={x:330,y:270,w:530,h:360},IS={x:1060,y:270,w:530,h:300};
+function strokeLen(c,pts,p){ // 折れ線を p（0..1）の分だけ描く
+ if(p<=0)return;let tot=0;const seg=[];for(let i=1;i<pts.length;i++){const d=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);seg.push(d);tot+=d}
+ let rest=tot*p;c.beginPath();c.moveTo(pts[0][0],pts[0][1]);
+ for(let i=1;i<pts.length&&rest>0;i++){const q=Math.min(1,rest/seg[i-1]);c.lineTo(lerp(pts[i-1][0],pts[i][0],q),lerp(pts[i-1][1],pts[i][1],q));rest-=seg[i-1]}c.stroke();
+}
+const box=r=>[[r.x,r.y],[r.x+r.w,r.y],[r.x+r.w,r.y+r.h],[r.x,r.y+r.h],[r.x,r.y]];
+function drawIntro(c,t){
+ c.save();c.strokeStyle=C.white;c.lineWidth=5;c.lineCap='round';c.lineJoin='round';
+ strokeLen(c,box(IC),E.outCubic(prog(t,.1,.7)));
+ c.lineWidth=3;for(let r=1;r<6;r++)strokeLen(c,[[IC.x,IC.y+r*60],[IC.x+IC.w,IC.y+r*60]],E.outCubic(prog(t,.3+r*.06,.8+r*.06)));
+ [150,230,260,410].forEach((x,k)=>strokeLen(c,[[IC.x+x,IC.y],[IC.x+x,IC.y+IC.h]],E.outCubic(prog(t,.5+k*.06,1+k*.06))));
+ c.lineWidth=5;strokeLen(c,box(IS),E.outCubic(prog(t,.5,1.1)));
+ c.lineWidth=10;strokeLen(c,[[IS.x+44,IS.y+62],[IS.x+300,IS.y+62]],E.outCubic(prog(t,.9,1.3)));
+ c.lineWidth=4;[0,1,2,3].forEach(i=>strokeLen(c,[[IS.x+44,IS.y+120+i*40],[IS.x+[470,430,480,280][i],IS.y+120+i*40]],E.outCubic(prog(t,1+i*.08,1.4+i*.08))));
+ c.restore();
+ masked(c,'ずっと使ってきた道具',CX,860,'900 92px JP',1.0,t,{stagger:.045,ls:4});
+}
+
+/* ---------- 引いたときの黄色い線（言葉が通った道） ---------- */
+const NS=[W+SLB.x+SLB.w*.72,SLB.y+SLB.h+8];    // 新しいスライドの下の辺（グラフの真下）
+// 文字の上を通らないよう、表と枠のすき間を通り、グラフの右の辺に触れてからスライドへ向かう
+const PATH=(()=>{const key=[[BC[0],BC[1]],[1340,520],[1222,570],[1180,700],[1218,880],[1400,995],[2500,900],NS],out=[];
+ for(let i=0;i<key.length-1;i++){const p0=key[Math.max(i-1,0)],p1=key[i],p2=key[i+1],p3=key[Math.min(i+2,key.length-1)];
+  for(let k=0;k<24;k++){const u=k/24,u2=u*u,u3=u2*u;out.push([0,1].map(d=>.5*(2*p1[d]+(-p0[d]+p2[d])*u+(2*p0[d]-5*p1[d]+4*p2[d]-p3[d])*u2+(-p0[d]+3*p1[d]-3*p2[d]+p3[d])*u3)))}}
+ out.push(NS);return out})();
+function drawPath(c,a,b){ // PATH の a..b（0..1）を描く
+ const n=PATH.length-1,i0=a*n,i1=b*n;const at=f=>{const i=Math.min(Math.floor(f),n-1),u=f-i;return[lerp(PATH[i][0],PATH[i+1][0],u),lerp(PATH[i][1],PATH[i+1][1],u)]};
+ c.save();c.strokeStyle=C.acc;c.lineWidth=18;c.lineCap='round';c.lineJoin='round';
+ if(i1>i0){c.beginPath();c.moveTo(...at(i0));for(let i=Math.ceil(i0);i<=Math.floor(i1);i++)c.lineTo(PATH[i][0],PATH[i][1]);c.lineTo(...at(i1));c.stroke()}
+ c.fillStyle=C.acc;c.beginPath();c.arc(...at(i1),26,0,TAU);c.fill();c.restore();
+}
+
+/* ---------- カメラ：screen = (world - o) * s ---------- */
+const OY=-70;
+function camera(t){
+ if(t<14.6)return{s:1,ox:0,oy:0};
+ if(t<21)return{s:1,ox:W*E.inOutExpo(prog(t,14.6,15.2)),oy:0};
+ const p=E.inOutCubic(prog(t,21.0,22.0));return{s:lerp(1,.5,p),ox:lerp(W,0,p),oy:lerp(0,OY,p)};
+}
+const DOT=[NS[0]*.5,(NS[1]-OY)*.5];   // 引いた画面での、線の終点
+
+function compose(c,t){
+ if(t>=27){title(c,t);return}
+ c.fillStyle=mix(C.navy,C.blue,E.inOutCubic(prog(t,5.0,5.6)));c.fillRect(0,0,W,H);
+ if(t<2.3){ // 冒頭 → マス目が表になる
+  const p=E.inOutCubic(prog(t,1.75,2.25)),R=lr(IC,SH,p);
+  c.save();c.globalAlpha=1-prog(p,.4,.9);c.translate(R.x,R.y);c.scale(R.w/IC.w,R.h/IC.h);c.translate(-IC.x,-IC.y);drawIntro(c,t);c.restore();
+  if(p>0){c.save();c.globalAlpha=prog(p,.3,.9);c.translate(R.x,R.y);c.scale(R.w/SH.w,R.h/SH.h);c.translate(-SH.x,-SH.y);drawSheet(c,t);c.restore()}
+  drawCursor(c,t);return;
+ }
+ const cam=camera(t),full=t>=21;
+ c.save();c.scale(cam.s,cam.s);c.translate(-cam.ox,-cam.oy);
+ if(cam.ox<W)drawExcel(c,t,full);
+ if(cam.ox>0||full){c.save();c.translate(W,0);drawPPT(c,t,full);c.restore()}
+ if(t>=22){const a=E.inOutCubic(prog(t,22.0,23.75)),b=E.inOutCubic(prog(t,25.0,26.0));if(t<26)drawPath(c,b,a)}
+ c.restore();
+ caption(c,'Excelの中に、AIがいます',t,5.25,9.0);
+ caption(c,'関数は、1つも打っていません',t,11.0,14.2);
+ caption(c,'誰に、何をしてほしいか',t,18.5,20.6);
+ if(full){ // 大きな文字（幅を測って、1行として中央に置く）
+  c.save();c.globalAlpha=1-prog(t,25.0,25.4);
+  masked(c,'打ったのは、',CX,770,'900 76px JP',22.5,t,{ls:4});
+  const F='900 104px JP',parts=[['やりたいことを書いた',23.0,C.white],['文',23.5,C.acc],['だけ',24.0,C.white]];
+  c.font=F;const ws=parts.map(p=>[...p[0]].reduce((a,s)=>a+c.measureText(s).width+4,0));let x=CX-ws.reduce((a,b)=>a+b,0)/2;
+  parts.forEach((p,i)=>{masked(c,p[0],x,910,F,p[1],t,{ls:4,stagger:.04,col:p[2],align:'left'});x+=ws[i]});
+  c.restore();
+  // 線が点にまとまり、白い円が広がる
+  if(t>=26){const an=Math.sin(prog(t,26.0,26.5)*Math.PI)*-5,r=13+an+E.inOutCubic(prog(t,26.5,27.0))*2300;
+   c.fillStyle=t>=26.5?mix(C.acc,C.white,prog(t,26.5,26.7)):C.acc;c.beginPath();c.arc(DOT[0],DOT[1],Math.max(r,1),0,TAU);c.fill()}
+ }
+}
+function title(c,t){
+ c.fillStyle=C.white;c.fillRect(0,0,W,H);const X=210;
+ masked(c,'Excel×PowerPoint',X,420,'900 132px JP',27.0,t,{align:'left',col:C.ink,stagger:.03});
+ c.fillStyle=C.blue;c.fillRect(X,470,640*E.outExpo(prog(t,27.25,27.8)),8);
+ masked(c,'使い慣れた道具が、',X,610,'900 80px JP',27.4,t,{align:'left',col:C.blue,stagger:.03});
+ masked(c,'言葉で動くようになった',X,725,'900 80px JP',27.6,t,{align:'left',col:C.blue,stagger:.03});
+ txt(c,'サロン向けAI勉強会 第3回＋第4回（再開催）',X,900,{font:'400 38px JP',fill:C.foot,alpha:prog(t,27.9,28.3)});
+ const p=E.outBack(prog(t,27.5,28.0));if(p>0){c.fillStyle=C.acc;rr(c,1300,682,Math.max(40,300*p),40,20);c.fill()}
+}
+
+/* ---------- 仕上げ：強拍で少し揺らす ---------- */
+function render(t){
+ const a=bufA.getContext('2d');a.save();compose(a,t);a.restore();
+ const imp=impact(t),sh=imp*10,dx=noise(t*40)*sh,dy=noise(t*40+50)*sh,z=1+imp*.015;
+ ctx.save();ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);ctx.translate(CX+dx,CY+dy);ctx.scale(z,z);ctx.drawImage(bufA,-CX,-CY);ctx.restore();
+}
+
+window.ready=(async()=>{await Promise.all(FONTS.map(f=>document.fonts.load(f,FONT_SAMPLE)));return true})();
+window.renderAt=t=>render(t);
+if(!location.search.includes('render')){
+ window.ready.then(()=>{
+  const audio=new Audio('audio.wav');audio.loop=true;let t0=performance.now();
+  const go=()=>{t0=performance.now();audio.currentTime=0;audio.play().catch(()=>{})};
+  cv.addEventListener('click',go);go();
+  const loop=()=>{requestAnimationFrame(loop);
+   const clock=!audio.paused&&audio.currentTime>0?audio.currentTime:(performance.now()-t0)/1000;
+   render(((clock%DUR)+DUR)%DUR)};
+  requestAnimationFrame(loop);
+ });
+}
+</script></body></html>
